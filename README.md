@@ -2,9 +2,15 @@
 
 O365beat is an open source log shipper used to fetch Office 365 audit logs from the [Office 365 Management Activity API](https://docs.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-reference) and forward them with all the flexibility and capability provided by the [beats platform](https://github.com/elastic/beats) (specifically, [libbeat](https://github.com/elastic/beats/tree/master/libbeat)).
 
-**The latest release is [v1.4.3](https://github.com/counteractive/o365beat/releases/latest)**.  It closes issues related to throttling (#17) and troubleshooting (#21).  Please open an issue or submit a pull request if you notice any problems in testing or production, and thanks to the users who have already done so, we appreciate the feedback!
+**The latest release is [v1.5.1](https://github.com/counteractive/o365beat/releases/latest)**.  This release:
 
-## Getting Started with O365beat
+* Added support for the [`script` processor](https://www.elastic.co/guide/en/beats/filebeat/current/processor-script.html) and provided a sample processor script to convert fields that contain arrays of name-value pairs into a "normal" object (closes #41)
+* Updated README and config files to highlight options to help avoid timeouts on busy tenancies (closes #39)
+* Updated README to link to references on API event data (closes #37)
+
+**Thank you so much to the users who reached out with issues, including feature requests.**  Please continue to help us and the community by opening issues or submitting pull requests if you notice problems in testing or production, or if there are features you'd like to see. We appreciate the feedback!
+
+## Getting Started with o365beat
 
 The easiest way to get started with o365beat is to use the pre-built binaries available in the [latest release](https://github.com/counteractive/o365beat/releases/latest/).
 
@@ -12,12 +18,9 @@ These pre-built packages include configuration files which contain all the neces
 
 ```yaml
 o365beat:
-  # period Defines how often API is polled for new content blobs
-  # 5 min default, as new content (probably) isn't published too often
-  # period: 5m
-
   # pull secrets from environment (e.g, > set -a; . ./ENV_FILE; set +a;)
-  # or hard-coded here:
+  # or a key store (https://www.elastic.co/guide/en/beats/filebeat/current/keystore.html)
+  # or hard-code here:
   tenant_domain: ${O365BEAT_TENANT_DOMAIN:}
   client_secret: ${O365BEAT_CLIENT_SECRET:}
   client_id:     ${O365BEAT_CLIENT_ID:}     # aka application id (GUID)
@@ -33,11 +36,11 @@ o365beat:
     - Audit.General
 ```
 
-**NOTE: Due to a quirk in the libbeat build system, the default config file contains an additional `processors` section that gets merged into the o365beat.yml and shadows the custom processors used by this beat. You must manually remove the second `processors` section, or merge the two, to avoid problems.**  Please see [this issue](https://github.com/counteractive/o365beat/issues/9) for more information, we're working on a durable fix.
+**NOTE 1: In pre-packaged releases before v1.5.0, the packaged config file contains an additional `processors` section that gets merged into the o365beat.yml and shadows the custom processors used by this beat. You must manually remove the second `processors` section, or merge the two, to avoid problems.**  This is due to a quirk in the libbeat build system which was fixed in release v1.5.0.
 
-See below for more details on these values.
+Again, **v1.5.0 packages (and later) do not exhibit this issue,** but if you retain your old configuration files you may still have the problematic `processors` section.  Please see [this issue](https://github.com/counteractive/o365beat/issues/9) for more information on how to fix it.
 
-**NOTE:** If you decide to hard-code these values, be sure to replace the `${:}` syntax, which [pulls from the environment](https://www.elastic.co/guide/en/beats/libbeat/current/config-file-format-env-vars.html).  For example, use `tenant_domain: acme.onmicrosoft.com` *not* `tenant_domain: ${acme.onmicrosoft.com:}`.
+**NOTE 2:** If you decide to hard-code your configuration values, be sure to replace the `${:}` syntax, which [pulls from the environment](https://www.elastic.co/guide/en/beats/libbeat/current/config-file-format-env-vars.html).  For example, use `tenant_domain: acme.onmicrosoft.com` *not* `tenant_domain: ${acme.onmicrosoft.com:}`.
 
 ### Prerequisites and Permissions
 
@@ -47,13 +50,13 @@ It also needs access to the Office 365 Management API: instructions for setting 
 
 Once you have these set up, you'll be able to get the information needed in the config file.  The naming conventions for the settings are a bit odd, in `o365beat.yml` you’ll see some of the synonyms: client id is also called the application id, and the directory id is also called the tenant id.  In the Azure portal, go to "App registrations" and you’ll see the Application (Client) ID – a GUID – right there in the application list.  If you click on that you’ll see the application (client) id and the directory (tenant) id in the top area.
 
-![App Details in Azure Portal](./docs/o365beat-readme-1.jpg)
+![App Details in Azure Portal](./docs/app-registration-overview.jpg)
 
-The client secret is a little trickier, you can create them by clicking the "Certificates & secrets" link on the left there.  Be sure to copy it somewhere or you’ll have to create a new one … there’s no facility for viewing them later.  The [default config file](./o365beat.yml) expects these config values to be in your environment (i.e., as environment variables), named O365BEAT_TENANT_DOMAIN, O365BEAT_CLIENT_SECRET, etc.  You can hard-code them in that file if you like, especially when testing, just be smart about the permissions.
+The client secret is a little trickier, you can create them by clicking the "Certificates & secrets" link on the left there.  Be sure to copy it somewhere or you’ll have to create a new one … there’s no facility for viewing them later.  The [default config file](./o365beat.yml) expects these config values to be in your environment (i.e., as environment variables) or in a [keystore](https://www.elastic.co/guide/en/beats/filebeat/current/keystore.html), named O365BEAT_TENANT_DOMAIN, O365BEAT_CLIENT_SECRET, etc.  You can hard-code them in that file if you like, especially when testing, just be smart about the permissions.
 
 Finally, the Azure app registration permissions should look like this:
 
-![App Permissions in Azure Portal](./docs/o365beat-readme-2.jpg)
+![App Permissions in Azure Portal](./docs/app-registration-permissions.jpg)
 
 You can edit those using that “API permissions” link on the left, with [more detailed instructions available from Microsoft](https://docs.microsoft.com/en-us/office/office-365-management-api/get-started-with-office-365-management-apis#specify-the-permissions-your-app-requires-to-access-the-office-365-management-apis).  The beat should automatically subscribe you to the right feeds, though that functionality is currently undergoing testing.
 
@@ -98,18 +101,13 @@ processors:
       fields:
         - {from: Id, to: 'event.id', type: string}                # ecs core
         - {from: RecordType, to: 'event.code', type: string}      # ecs extended
-        # - {from: "CreationTime", to: "", type: ""}              # @timestamp
         - {from: Operation, to: 'event.action', type: string}     # ecs core
         - {from: OrganizationId, to: 'cloud.account.id', type: string} # ecs extended
-        # - {from: UserType, to: '', type: ''}                    # no ecs mapping
-        # - {from: UserKey, to: '', type: ''}                     # no ecs mapping
         - {from: Workload, to: 'event.category', type: string}    # ecs core
         - {from: ResultStatus, to: 'event.outcome', type: string} # ecs extended
-        # - {from: ObjectId, to: '', type: ''}                    # no ecs mapping
         - {from: UserId, to: 'user.id', type: string}             # ecs core
         - {from: ClientIP, to: 'client.ip', type: ip}             # ecs core
         - {from: 'dissect.clientip', to: 'client.ip', type: ip}   # ecs core
-        # - {from: "Scope", to: "", type: ""}                     # no ecs mapping
         - {from: Severity, to: 'event.severity', type: string}    # ecs core
         # the following fields use the challenging array-of-name-value-pairs format
         # converting them to strings fixes issues in elastic, eases non-script parsing
@@ -145,6 +143,28 @@ Please open an issue or a pull request if you have suggested improvements to thi
 * **I'm seeing `non-200` errors in my debugging output for some API calls, am I getting all events?**
 
   Please update to release [v1.4.3](https://github.com/counteractive/o365beat/releases/tag/v1.4.3) or later.  There were a few cases where the `PublisherIdentifier` was not appended to requests, which could cause API throttling in certain cases, which has now been fixed.
+
+* **Can I use this beat with [GCC High endpoints](https://docs.microsoft.com/en-us/office365/enterprise/office-365-u-s-government-gcc-high-endpoints), or other non-standard Office 365 deployments?**
+
+  Yes! As of version 1.5.0, the beat pulls Login URL and Resource URL values from the config file.  The default values work for typical Office 365 situations, but you can connect to [GCC High endpoints](https://docs.microsoft.com/en-us/office365/enterprise/office-365-u-s-government-gcc-high-endpoints) by modifying the following keys:
+    ```yaml
+    o365beat:
+      login_url: login.microsoftonline.us  # default is login.microsoftonline.com
+      resource_url: manage.office365.us    # default is manage.office.com
+      # rest of your config ...
+    ```
+
+* **Why am I getting timeout errors when retrieving certain content types?**
+
+  For busy tenants or certain networking environments the default `api_timeout` of 30 seconds might be insufficient.  You can extend this in `o365beat.yml`.  Additionally, you can minimize risk of timeouts by reducing the `content_max_age` setting (default 7 days, or 168 hours) to something like 1 day (`1d`) or a few hours (say, `5h`).  Generally this will only impact you on the first time you run the beat, as every request thereafter will only be requesting data for the preceding `period` (default, 5 minutes).  See [this issue](https://github.com/counteractive/o365beat/issues/39) for additional discussion.
+
+* **Can I parse event fields like `ExtendedProperties` and `Parameters` that contain arrays of name-value pairs on the client side before shipping them?**
+
+  As of version 1.5.1, the beat imports the [`script` processor](https://www.elastic.co/guide/en/beats/filebeat/current/processor-script.html) and provides a sample processor script in `o365beat.reference.yml` to convert fields that contain arrays of name-value pairs into a "normal" object. See [this issue](https://github.com/counteractive/o365beat/issues/41) for more discussion.
+
+* **Why are the authentication events (especially logon failures and errors) so confusing?**
+
+  Please see [this issue](https://github.com/counteractive/o365beat/issues/37) for an in-depth discussion of some of the idiosyncrasies of the audit log events themselves.  This beat just ships them, Microsoft makes decisions about what's in them.
 
 * **I don't see my problem listed here, what gives?**
 
@@ -196,7 +216,7 @@ make update
 
 ### Cleanup
 
-To clean  O365beat source code, run the following command:
+To clean o365beat source code, run the following command:
 
 ```bash
 make fmt
@@ -210,7 +230,7 @@ make clean
 
 ### Clone
 
-To clone O365beat from the git repository, run the following commands:
+To clone o365beat from the git repository, run the following commands:
 
 ```bash
 mkdir -p ${GOPATH}/src/github.com/counteractive/o365beat
@@ -233,14 +253,17 @@ This will fetch and create all images required for the build process. The whole 
 
 ## Tasks
 
+* [ ] Support multiple tenancies with a single beat instance
+* [ ] Support client certificates (in addition to client secrets)
 * [ ] Tests
 * [ ] ECS field mappings beyond the API's [common schema](https://docs.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-schema#common-schema)
 * [x] Add visualizations and dashboard
-* [x] Update underlying libbeat to ~~7.3.x~~ 7.4.x (currently 7.2.x)
 * [x] ECS field mappings for API's [common schema](https://docs.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-schema#common-schema)
 
 ## Changelog
 
+* v1.5.1 - Added support for the `script` processor (to fix #41), updated README and config files to highlight options to help avoid timeouts (#39), updated README to link to references on API event data (#37)
+* v1.5.0 - Added and documented feature to customize API endpoints (#25), updates libbeat to v7.5.1, properly parses certain `ClientIP` field formats (#16, #31), fixes build issue that caused important processors to be shadowed in config (#9), fixes issue parsing corrupted state/registry files (#19).
 * v1.4.3 - Fixed bugs related to throttling and troubleshooting (closes issues #17 and #21)
 * v1.4.2 - Fixed multiple processor bugs (closes issues #12, #13, and #14)
 * v1.4.1 - Added kibana visualizations and dashboard and updated processors to better handle fields containing data arrays

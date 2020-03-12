@@ -8,6 +8,10 @@
 o365beat:
   period: 30s
 
+  # used to test custom API endpoints functionality (GCC high)
+  # login_url: https://login.microsoftonline.com  # default is https://login.microsoftonline.com
+  # resource_url: https://manage.office.com       # default is https://manage.office.com
+
   # > set -a; . ./o365beat.env; set +a;
   tenant_domain: ${O365BEAT_TENANT_DOMAIN}
   client_secret: ${O365BEAT_CLIENT_SECRET}
@@ -28,29 +32,60 @@ o365beat:
 #                      UserId, ClientIP, Scope
 # TODO: Docs say event.created = time created in pipeline (not CreationTime)
 processors:
+  - script:
+      when:
+        or:
+          - has_fields: ['Parameters']
+          - has_fields: ['ExtendedProperties']
+      lang: javascript
+      id: name_value_array_parser
+      source: >
+        function process(event){
+          var processed = event.Get('processed') || {};
+          var parameters = event.Get('Parameters')
+          if(!!parameters && !!parameters.length){
+            processed.Parameters = processed.Parameters || {};
+            for(var i = 0; i < parameters.length; i++){
+              var p = parameters[i];
+              if(p.Name) processed.Parameters[p.Name] = p.Value;
+            }
+          }
+          var extendedProperties = event.Get('ExtendedProperties')
+          if(!!extendedProperties && !!extendedProperties.length){
+            processed.ExtendedProperties = processed.ExtendedProperties || {};
+            for(var i = 0; i < extendedProperties.length; i++){
+              var p = extendedProperties[i];
+              if(p.Name) processed.ExtendedProperties[p.Name] = p.Value;
+            }
+          }
+          event.Put('processed', processed);
+        }
   - dissect:
-      field: "ClientIP"
-      tokenizer: "[%{clientip}]:%{clientport}"
+      field: ClientIP
+      tokenizer: '[%{clientip}]:%{clientport}'
       when:
         contains:
-          ClientIP: "["
+          ClientIP: '['
+  - dissect:
+      field: ClientIP
+      tokenizer: '%{clientip}:%{clientport}'
+      when:
+        contains:
+          ClientIP: ':'
+        not:
+          contains:
+            ClientIP: '['
   - convert:
       fields:
         - {from: Id, to: 'event.id', type: string}                # ecs core
         - {from: RecordType, to: 'event.code', type: string}      # ecs extended
-        # - {from: "CreationTime", to: "", type: ""}              # @timestamp
         - {from: Operation, to: 'event.action', type: string}     # ecs core
         - {from: OrganizationId, to: 'cloud.account.id', type: string} # ecs extended
-        # - {from: UserType, to: '', type: ''}                    # no ecs mapping
-        # - {from: UserKey, to: '', type: ''}                     # no ecs mapping
         - {from: Workload, to: 'event.category', type: string}    # ecs core
         - {from: ResultStatus, to: 'event.outcome', type: string} # ecs extended
-        # - {from: ObjectId, to: '', type: ''}                    # no ecs mapping
         - {from: UserId, to: 'user.id', type: string}             # ecs core
         - {from: ClientIP, to: 'client.ip', type: ip}             # ecs core
         - {from: 'dissect.clientip', to: 'client.ip', type: ip}   # ecs core
-        # - {from: "Scope", to: "", type: ""}                     # no ecs mapping
-        - {from: Severity, to: 'event.severity', type: string}    # ecs core
         # the following fields use the challenging array-of-name-value-pairs format
         # converting them to strings fixes issues in elastic, eases non-script parsing
         # easier to rehydrate into arrays from strings than vice versa:
@@ -64,14 +99,15 @@ processors:
 # output.console:
 #   pretty: true
 
-# output.file:
-#   path: "./tmp/"
-#   filename: o365beat.json
+output.file:
+  path: "./tmp/"
+  filename: o365beat.json
 
-output.elasticsearch:
-  hosts: ["http://localhost:9200"]
-  username: "elastic"
-  password: "changeme"
+# output.elasticsearch:
+#   hosts: ["http://localhost:9200"]
+#   username: "elastic"
+#   password: "changeme"
+
 # output.logstash:
 #   hosts:
 #     - ${O365BEAT_LOGSTASH_HOST}

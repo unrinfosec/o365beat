@@ -15,6 +15,9 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 
+	// import o365beat-level processors (same style as filebeat)
+	_ "github.com/elastic/beats/libbeat/processors/script"
+
 	"github.com/counteractive/o365beat/config"
 )
 
@@ -60,10 +63,10 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 	}
 
 	// using url.Parse seems like overkill
-	loginURL := "https://login.microsoftonline.com/"
-	resourceURL := "https://manage.office.com/"
-	au := loginURL + c.TenantDomain + "/oauth2/token?api-version=1.0"
-	api := resourceURL + "api/v1.0/" + c.DirectoryID + "/activity/feed/"
+	loginURL := c.LoginURL
+	resourceURL := c.ResourceURL
+	au := loginURL + "/" + c.TenantDomain + "/oauth2/token?api-version=1.0"
+	api := resourceURL + "/api/v1.0/" + c.DirectoryID + "/activity/feed/"
 	cl := &http.Client{Timeout: c.APITimeout}
 	var ai *authInfo
 
@@ -89,7 +92,7 @@ func (bt *O365beat) apiRequest(verb, urlStr string, body, query, headers map[str
 		logp.Error(err)
 		return nil, err
 	}
-	reqQuery := req.URL.Query() // keep querystring values from urlStr
+	reqQuery := req.URL.Query()                                // keep querystring values from urlStr
 	reqQuery.Set("PublisherIdentifier", bt.config.DirectoryID) // to prevent throttling
 	for k, v := range query {
 		reqQuery.Set(k, v)
@@ -130,7 +133,7 @@ func (bt *O365beat) authenticate() error {
 	logp.Info("authenticating via %s", bt.authURL)
 	reqBody := url.Values{}
 	reqBody.Set("grant_type", "client_credentials")
-	reqBody.Set("resource", "https://manage.office.com")
+	reqBody.Set("resource", bt.config.ResourceURL)
 	reqBody.Set("client_id", bt.config.ClientID)
 	reqBody.Set("client_secret", bt.config.ClientSecret)
 	req, err := http.NewRequest("POST", bt.authURL, strings.NewReader(reqBody.Encode()))
@@ -180,7 +183,7 @@ func (bt *O365beat) subscribe(contentType string) (common.MapStr, error) {
 	logp.Info("note that new subscriptions can take up to 12 hours to produce data")
 	logp.Debug("api", "subscribing to %v at %s", contentType, bt.apiRootURL+"subscriptions/start")
 	query := map[string]string{
-		"contentType":         contentType,
+		"contentType": contentType,
 	}
 	res, err := bt.apiRequest("POST", bt.apiRootURL+"subscriptions/start", nil, query, nil)
 	if err != nil {
@@ -259,9 +262,9 @@ func (bt *O365beat) listAvailableContent(contentType string, start, end time.Tim
 
 	dateFmt := "2006-01-02T15:04:05" // API needs UTC in this format (no "Z" suffix)
 	query := map[string]string{
-		"contentType":         contentType,
-		"startTime":           start.UTC().Format(dateFmt),
-		"endTime":             end.UTC().Format(dateFmt),
+		"contentType": contentType,
+		"startTime":   start.UTC().Format(dateFmt),
+		"endTime":     end.UTC().Format(dateFmt),
 	}
 	res, err := bt.apiRequest("GET", bt.apiRootURL+"subscriptions/content", nil, query, nil)
 	if err != nil {
